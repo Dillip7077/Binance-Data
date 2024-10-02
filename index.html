@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Binance Market Data Visualization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            padding: 20px;
+            max-width: 800px;
+            margin: auto;
+        }
+        select {
+            margin: 10px;
+            padding: 5px;
+        }
+        #chartContainer {
+            width: 100%;
+            height: 400px;
+            position: relative;
+            margin-top: 20px;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <h1>Binance Market Data Dashboard</h1>
+    <label for="coinSelect">Select Cryptocurrency:</label>
+    <select id="coinSelect">
+        <option value="ethusdt">ETH/USDT</option>
+        <option value="bnbusdt">BNB/USDT</option>
+        <option value="dotusdt">DOT/USDT</option>
+    </select>
+    
+    <label for="intervalSelect">Select Time Interval:</label>
+    <select id="intervalSelect">
+        <option value="1m">1 Minute</option>
+        <option value="3m">3 Minutes</option>
+        <option value="5m">5 Minutes</option>
+    </select>
+    
+    <div id="chartContainer">
+        <canvas id="candlestickChart"></canvas>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script>
+        // Element references
+        const coinSelector = document.getElementById('coinSelect');
+        const intervalSelector = document.getElementById('intervalSelect');
+        const chartContext = document.getElementById('candlestickChart').getContext('2d');
+
+        // Global variables
+        let candlestickChart;
+        let storedData = JSON.parse(localStorage.getItem('storedData')) || {};
+        let selectedCoin = coinSelector.value;
+        let selectedInterval = intervalSelector.value;
+
+        // Initialize the candlestick chart with data
+        function setupChart(data) {
+            if (candlestickChart) {
+                candlestickChart.destroy(); // Destroy existing chart instance
+            }
+
+            if (data.length === 0) {
+                console.log('No data available to display.'); // Log message if no data
+                return;
+            }
+
+            console.log('Setting up chart with the following data:', data); // Log data being used
+            candlestickChart = new Chart(chartContext, {
+                type: 'candlestick',
+                data: {
+                    datasets: [{
+                        label: `${selectedCoin.toUpperCase()} Candlesticks`,
+                        data: data,
+                    }],
+                },
+                options: {
+                    scales: {
+                        x: {
+                            type: 'time',
+                            title: {
+                                display: true,
+                                text: 'Time',
+                            },
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Price (USDT)',
+                            },
+                        },
+                    },
+                },
+            });
+        }
+
+        // Connect to Binance WebSocket for real-time data
+        function establishWebSocket() {
+            const websocket = new WebSocket(`wss://stream.binance.com:9443/ws/${selectedCoin}@kline_${selectedInterval}`);
+
+            websocket.onopen = () => {
+                console.log('WebSocket connected successfully.');
+            };
+
+            websocket.onmessage = (event) => {
+                const messageData = JSON.parse(event.data);
+                const klineData = messageData.k;
+
+                // Proceed only if the candlestick is closed
+                if (klineData.x) {
+                    const candle = {
+                        t: new Date(klineData.t).getTime(),
+                        o: parseFloat(klineData.o),
+                        h: parseFloat(klineData.h),
+                        l: parseFloat(klineData.l),
+                        c: parseFloat(klineData.c),
+                    };
+
+                    // Store the data for the selected coin
+                    if (!storedData[selectedCoin]) {
+                        storedData[selectedCoin] = [];
+                    }
+
+                    // Limit the number of stored candles to 100
+                    if (storedData[selectedCoin].length >= 100) {
+                        storedData[selectedCoin].shift(); // Remove the oldest entry
+                    }
+                    storedData[selectedCoin].push(candle);
+                    localStorage.setItem('storedData', JSON.stringify(storedData)); // Persist to local storage
+
+                    console.log('New data received:', candle); // Log new candle data
+                    setupChart(storedData[selectedCoin]); // Update chart with new data
+                }
+            };
+
+            websocket.onerror = (error) => {
+                console.error('WebSocket error occurred:', error);
+            };
+
+            websocket.onclose = () => {
+                console.log('WebSocket connection closed.');
+            };
+        }
+
+        // Handle changes to selected coin
+        function handleCoinChange() {
+            selectedCoin = coinSelector.value;
+            if (storedData[selectedCoin]) {
+                setupChart(storedData[selectedCoin]); // Load historical data
+            } else {
+                setupChart([]); // Load empty chart if no data
+            }
+            establishWebSocket(); // Re-establish WebSocket connection
+        }
+
+        // Handle changes to selected interval
+        function handleIntervalChange() {
+            selectedInterval = intervalSelector.value;
+            establishWebSocket(); // Re-establish WebSocket connection with new interval
+        }
+
+        // Event listeners for dropdown changes
+        coinSelector.addEventListener('change', handleCoinChange);
+        intervalSelector.addEventListener('change', handleIntervalChange);
+
+        // Initialize application
+        establishWebSocket();
+        if (storedData[selectedCoin]) {
+            setupChart(storedData[selectedCoin]); // Load initial chart with historical data
+        } else {
+            setupChart([]); // Start with an empty chart
+        }
+    </script>
+</body>
+</html>
